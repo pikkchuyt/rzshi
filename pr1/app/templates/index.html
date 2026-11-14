@@ -5,12 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Погода</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; }
+    body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; color: #1c1c1e; }
     form { display: flex; gap: .5rem; margin: 1.5rem 0; }
     input { flex: 1; padding: .5rem; font-size: 1rem; }
     button { padding: .5rem 1rem; font-size: 1rem; cursor: pointer; }
-    #result { min-height: 3rem; white-space: pre-wrap; }
+    button:disabled { cursor: wait; opacity: .6; }
+    #result { min-height: 3rem; }
     .error { color: #b00020; }
+    .place { font-size: 1.25rem; font-weight: 600; margin: 0 0 .75rem; }
+    .values { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin: 0; }
+    .values div { border: 1px solid #d0d0d5; border-radius: .5rem; padding: .75rem; }
+    .values dt { font-size: .85rem; color: #6b6b70; }
+    .values dd { margin: .25rem 0 0; font-size: 1.5rem; }
+    .time { margin-top: .75rem; font-size: .85rem; color: #6b6b70; }
   </style>
 </head>
 <body>
@@ -21,36 +28,99 @@
     <button type="submit">Показати</button>
   </form>
 
-  <div id="result"></div>
+  <div id="result" aria-live="polite"></div>
 
   <script>
     // Сторінка звертається до власного ендпоінта застосунку, а не до
-    // зовнішнього API напряму. Як показувати результат і як формулювати
-    // повідомлення про помилку — на ваш розсуд.
+    // зовнішнього API напряму.
     const form = document.getElementById('weather-form');
+    const input = document.getElementById('city');
+    const button = form.querySelector('button');
     const result = document.getElementById('result');
+
+    // Сервіс віддає одиниці латиницею — показуємо їх українською.
+    const UNIT_NAMES = { 'km/h': 'км/год', 'm/s': 'м/с', 'mph': 'миль/год', 'kn': 'вузлів' };
+
+    function showError(message) {
+      result.className = 'error';
+      result.textContent = message;
+    }
+
+    function addValue(list, label, value) {
+      const box = document.createElement('div');
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      dt.textContent = label;
+      dd.textContent = value;
+      box.append(dt, dd);
+      list.append(box);
+    }
+
+    // Текст вставляється через textContent, а не innerHTML: назва міста
+    // приходить ззовні й не має виконуватися як розмітка.
+    function showWeather(data) {
+      result.className = '';
+      result.textContent = '';
+
+      const place = document.createElement('p');
+      place.className = 'place';
+      place.textContent = data.country ? `${data.city}, ${data.country}` : data.city;
+
+      const values = document.createElement('dl');
+      values.className = 'values';
+      const windUnit = UNIT_NAMES[data.wind_speed_unit] || data.wind_speed_unit;
+      addValue(values, 'Температура', `${data.temperature} ${data.temperature_unit}`);
+      addValue(values, 'Швидкість вітру', `${data.wind_speed} ${windUnit}`);
+
+      result.append(place, values);
+
+      if (data.time) {
+        const time = document.createElement('p');
+        time.className = 'time';
+        time.textContent = `Дані станом на ${data.time.replace('T', ' ')} (UTC)`;
+        result.append(time);
+      }
+    }
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const city = document.getElementById('city').value.trim();
+      const city = input.value.trim();
+
+      // Атрибут required пропускає рядок із самих пробілів — перевіряємо самі.
+      if (!city) {
+        showError('Введіть назву міста.');
+        return;
+      }
+
       result.className = '';
       result.textContent = 'Запит…';
+      button.disabled = true;
 
       try {
         const response = await fetch('/api/weather?city=' + encodeURIComponent(city));
-        const data = await response.json();
+
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (parseError) {
+          // Сервер відповів не JSON-ом — покажемо загальне повідомлення нижче.
+        }
 
         if (!response.ok) {
-          result.className = 'error';
-          result.textContent = 'Помилка: ' + JSON.stringify(data);
+          showError((data && data.message) || 'Сталася помилка. Спробуйте ще раз пізніше.');
+          return;
+        }
+        if (!data) {
+          showError('Сервер повернув незрозумілу відповідь.');
           return;
         }
 
-        // TODO: показати температуру й швидкість вітру у зрозумілому вигляді.
-        result.textContent = JSON.stringify(data, null, 2);
+        showWeather(data);
       } catch (error) {
-        result.className = 'error';
-        result.textContent = 'Не вдалося звернутися до сервера.';
+        // fetch відхиляється, лише коли наш власний сервер недосяжний.
+        showError('Не вдалося звернутися до сервера застосунку.');
+      } finally {
+        button.disabled = false;
       }
     });
   </script>
